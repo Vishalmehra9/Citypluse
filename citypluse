@@ -1,0 +1,1388 @@
+# CityPulse Civic Health Dashboard
+# Core application runs on standard Python 3.8+ library with zero external pip requirements!
+# No third-party dependencies are required to run `python app.py`.
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "CityPulse: Run Dashboard Server (F5)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/app.py",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        }
+    ]
+}
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Start CityPulse Server",
+            "type": "shell",
+            "command": "python app.py",
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            }
+        }
+    ]
+}
+{
+    "python.defaultInterpreterPath": "python",
+    "python.terminal.activateEnvironment": true,
+    "editor.formatOnSave": true,
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/.pytest_cache": true
+    }
+}
+"""
+CityPulse - Data Models
+Civic Health Dashboard schemas for geographic hierarchy, signals, deductions, forecasts, and alerts.
+"""
+
+from dataclasses import dataclass, asdict
+from typing import List, Dict, Any, Optional
+
+@dataclass
+class GeoLocation:
+    country: str
+    country_code: str
+    state: str
+    state_hi: str
+    district: str
+    district_hi: str
+    local_area: str
+    local_area_hi: str
+    latitude: float
+    longitude: float
+    ward_code: str
+    pin_code: str
+    primary_corridor: str = ""
+    bottleneck_junction: str = ""
+    emergency_contact: str = ""
+
+@dataclass
+class WeatherSignal:
+    condition: str
+    condition_hi: str
+    temperature_c: int
+    rainfall_mm: float
+    aqi: int
+    aqi_status: str
+    aqi_status_hi: str
+    icon: str
+    deduction: int
+
+@dataclass
+class TransitSignal:
+    delay_minutes: int
+    normal_delay_minutes: int
+    pct_increase: int
+    primary_corridor: str
+    active_lines_delayed: int
+    deduction: int
+
+@dataclass
+class IncidentsSignal:
+    count: int
+    normal_count: int
+    pct_increase: int
+    threshold: int
+    threshold_exceeded: bool
+    primary_category: str
+    primary_category_hi: str
+    deduction: int
+
+@dataclass
+class TrafficSignal:
+    congestion_level: str
+    congestion_level_hi: str
+    speed_kmh: int
+    normal_speed_kmh: int
+    travel_time_increase_pct: int
+    bottleneck_junction: str
+    roads_affected: int
+    deduction: int
+
+@dataclass
+class ScoreBreakdown:
+    normal_pulse: int
+    weather_deduction: int
+    transit_deduction: int
+    incidents_deduction: int
+    traffic_deduction: int
+    total_deduction: int
+    current_pulse: int
+
+@dataclass
+class ForecastSignal:
+    risk_level: str
+    risk_level_hi: str
+    predicted_delay_range: str
+    incident_trend: str
+    disclaimer: str
+
+@dataclass
+class AlertSignal:
+    id: str
+    priority: str
+    priority_hi: str
+    timestamp: str
+    title: str
+    title_hi: str
+    message: str
+    message_hi: str
+    recommended_actions: List[str]
+    recommended_actions_hi: List[str]
+
+@dataclass
+class TimelineEvent:
+    timestamp_offset: str
+    time_label: str
+    title: str
+    title_hi: str
+    description: str
+    description_hi: str
+    pulse_at_time: int
+    icon: str
+
+@dataclass
+class Zone:
+    id: str
+    name: str
+    name_hi: str
+    location: GeoLocation
+    pulse: int
+    normal_pulse: int
+    status: str
+    status_hi: str
+    status_color: str
+    weather: WeatherSignal
+    transit: TransitSignal
+    incidents: IncidentsSignal
+    traffic: TrafficSignal
+    breakdown: ScoreBreakdown
+    forecast: ForecastSignal
+    alert: Optional[AlertSignal]
+    timeline: List[TimelineEvent]
+    trend_history_60m: List[int]
+    correlation_detected: bool
+    correlation_summary: str
+    correlation_summary_hi: str
+    resident_advice: str
+    resident_advice_hi: str
+    staff_summary: str
+    staff_summary_hi: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+        """
+CityPulse - Simulation Engine & High-Signal Urban Telemetry
+Includes real geographic hierarchy:
+Country (India) -> State -> District -> Local Ward / Focal Area
+"""
+
+import random
+from datetime import datetime, timedelta
+from typing import Dict, Any, List, Optional
+from models import (
+    WeatherSignal, TransitSignal, IncidentsSignal, TrafficSignal,
+    ScoreBreakdown, ForecastSignal, AlertSignal, TimelineEvent,
+    GeoLocation, Zone
+)
+
+GEO_DATABASE: List[Dict[str, Any]] = [
+    {
+        "id": "delhi_cp",
+        "country": "India",
+        "country_code": "IN",
+        "state": "Delhi NCR",
+        "state_hi": "दिल्ली एनसीआर",
+        "district": "New Delhi",
+        "district_hi": "नई दिल्ली",
+        "local_area": "Connaught Place (Ward 4)",
+        "local_area_hi": "कनॉट प्लेस (वार्ड 4)",
+        "latitude": 28.6315,
+        "longitude": 77.2167,
+        "ward_code": "DL-ND-04",
+        "pin_code": "110001",
+        "primary_corridor": "Barakhamba - Outer Circle Arterial",
+        "bottleneck_junction": "Minto Bridge Underpass",
+        "emergency_contact": "112 / Delhi Disaster Control: 1077"
+    },
+    {
+        "id": "mumbai_bkc",
+        "country": "India",
+        "country_code": "IN",
+        "state": "Maharashtra",
+        "state_hi": "महाराष्ट्र",
+        "district": "Mumbai Suburban",
+        "district_hi": "मुंबई उपनगर",
+        "local_area": "Bandra-Kurla Complex (BKC)",
+        "local_area_hi": "बांद्रा-कुर्ला कॉम्प्लेक्स (बीकेसी)",
+        "latitude": 19.0657,
+        "longitude": 72.8687,
+        "ward_code": "MH-MUM-HE",
+        "pin_code": "400051",
+        "primary_corridor": "Western Express Corridor",
+        "bottleneck_junction": "Kalanagar Junction Flyover",
+        "emergency_contact": "112 / BMC Disaster Management: 1916"
+    },
+    {
+        "id": "blr_koramangala",
+        "country": "India",
+        "country_code": "IN",
+        "state": "Karnataka",
+        "state_hi": "कर्नाटक",
+        "district": "Bengaluru Urban",
+        "district_hi": "बेंगलुरु शहरी",
+        "local_area": "Koramangala 4th Block",
+        "local_area_hi": "कोरमंगला चौथा ब्लॉक",
+        "latitude": 12.9352,
+        "longitude": 77.6245,
+        "ward_code": "KA-BLR-89",
+        "pin_code": "560034",
+        "primary_corridor": "Sony World - Intermediate Ring Road",
+        "bottleneck_junction": "Silk Board & Sony Junction",
+        "emergency_contact": "112 / BBMP Control Room: 1533"
+    },
+    {
+        "id": "noida_sec18",
+        "country": "India",
+        "country_code": "IN",
+        "state": "Uttar Pradesh",
+        "state_hi": "उत्तर प्रदेश",
+        "district": "Gautam Buddha Nagar",
+        "district_hi": "गौतम बुद्ध नगर",
+        "local_area": "Noida Sector 18 Hub",
+        "local_area_hi": "नोएडा सेक्टर 18 हब",
+        "latitude": 28.5708,
+        "longitude": 77.3261,
+        "ward_code": "UP-GBN-18",
+        "pin_code": "201301",
+        "primary_corridor": "Noida-Greater Noida Expressway",
+        "bottleneck_junction": "Atta Market Underpass",
+        "emergency_contact": "112 / Noida Authority Helpline: 0120-2425025"
+    },
+    {
+        "id": "kolkata_parkst",
+        "country": "India",
+        "country_code": "IN",
+        "state": "West Bengal",
+        "state_hi": "पश्चिम बंगाल",
+        "district": "Kolkata",
+        "district_hi": "कोलकाता",
+        "local_area": "Park Street / Esplanade",
+        "local_area_hi": "पार्क स्ट्रीट / एस्प्लेनेड",
+        "latitude": 22.5535,
+        "longitude": 88.3518,
+        "ward_code": "WB-KOL-63",
+        "pin_code": "700016",
+        "primary_corridor": "Jawaharlal Nehru Road Corridor",
+        "bottleneck_junction": "Camac Street Intersection",
+        "emergency_contact": "112 / KMC Control: 033-2286-1212"
+    }
+]
+
+WEATHER_PRESETS = [
+    {
+        "en": "Heavy Monsoon Downpour & Road Waterlogging",
+        "hi": "भारी मानसूनी बारिश और सड़कों पर जलभराव",
+        "temp": 26,
+        "rain": 24.5,
+        "aqi": 182,
+        "aqi_status": "Moderate Polluted",
+        "aqi_status_hi": "मध्यम प्रदूषित",
+        "icon": "cloud-rain"
+    },
+    {
+        "en": "High Wind Storm & Localized Flooding",
+        "hi": "तेज आंधी-तूफान और स्थानीय जलभराव",
+        "temp": 25,
+        "rain": 19.0,
+        "aqi": 140,
+        "aqi_status": "Moderate",
+        "aqi_status_hi": "मध्यम",
+        "icon": "cloud-lightning"
+    },
+    {
+        "en": "Flash Torrential Rain with Severe Water Pooling",
+        "hi": "मूसलाधार बारिश और भारी जलजमाव",
+        "temp": 24,
+        "rain": 31.0,
+        "aqi": 95,
+        "aqi_status": "Satisfactory",
+        "aqi_status_hi": "संतोषजनक",
+        "icon": "cloud-drizzle"
+    }
+]
+
+def get_location_hierarchy() -> Dict[str, Any]:
+    """Returns a structured hierarchy tree for UI cascading dropdowns: Country -> State -> District -> Ward."""
+    tree: Dict[str, Any] = {"India": {}}
+    for loc in GEO_DATABASE:
+        st = loc["state"]
+        dist = loc["district"]
+        area = loc["local_area"]
+        if st not in tree["India"]:
+            tree["India"][st] = {}
+        if dist not in tree["India"][st]:
+            tree["India"][st][dist] = []
+        tree["India"][st][dist].append({
+            "id": loc["id"],
+            "local_area": area,
+            "local_area_hi": loc.get("local_area_hi", area),
+            "ward_code": loc["ward_code"],
+            "pin_code": loc["pin_code"],
+            "lat": loc["latitude"],
+            "lon": loc["longitude"]
+        })
+    return tree
+
+def generate_scenario(target_location_id: str = "delhi_cp", target_pulse: Optional[int] = None) -> Dict[str, Any]:
+    legacy_map = {
+        "central": "delhi_cp",
+        "north": "noida_sec18",
+        "south": "blr_koramangala",
+        "west": "mumbai_bkc",
+        "east": "kolkata_parkst"
+    }
+    if target_location_id in legacy_map:
+        target_location_id = legacy_map[target_location_id]
+
+    valid_ids = [g["id"] for g in GEO_DATABASE]
+    if target_location_id not in valid_ids:
+        target_location_id = "delhi_cp"
+
+    if target_pulse is None:
+        target_pulse = random.choice([69, 71, 72, 73, 74, 75])
+
+    normal_pulse = random.choice([93, 94, 95])
+    total_deduction = normal_pulse - target_pulse
+
+    w_ded = max(4, round(total_deduction * 0.26))
+    t_ded = max(5, round(total_deduction * 0.35))
+    i_ded = max(3, round(total_deduction * 0.22))
+    tr_ded = total_deduction - (w_ded + t_ded + i_ded)
+
+    if tr_ded < 2:
+        diff = 2 - tr_ded
+        tr_ded = 2
+        w_ded -= diff
+
+    assert (w_ded + t_ded + i_ded + tr_ded) == total_deduction
+    assert (normal_pulse - total_deduction) == target_pulse
+
+    weather_info = random.choice(WEATHER_PRESETS)
+
+    norm_delay = random.choice([4, 5])
+    curr_delay = norm_delay + random.randint(12, 16)
+    transit_pct = int(((curr_delay - norm_delay) / norm_delay) * 100)
+
+    norm_incidents = random.choice([2, 3])
+    curr_incidents = norm_incidents + random.randint(9, 12)
+    incidents_pct = int(((curr_incidents - norm_incidents) / norm_incidents) * 100)
+    threshold = 8
+
+    traffic_pct = random.randint(62, 85)
+    curr_speed = random.randint(12, 16)
+    norm_speed = random.randint(40, 48)
+
+    now = datetime.now()
+    t4 = now.strftime("%H:%M")
+    t3 = (now - timedelta(minutes=15)).strftime("%H:%M")
+    t2 = (now - timedelta(minutes=30)).strftime("%H:%M")
+    t1 = (now - timedelta(minutes=45)).strftime("%H:%M")
+
+    zones_dict: Dict[str, Zone] = {}
+
+    for geo in GEO_DATABASE:
+        zid = geo["id"]
+        loc = GeoLocation(
+            country=geo["country"],
+            country_code=geo["country_code"],
+            state=geo["state"],
+            state_hi=geo["state_hi"],
+            district=geo["district"],
+            district_hi=geo["district_hi"],
+            local_area=geo["local_area"],
+            local_area_hi=geo["local_area_hi"],
+            latitude=geo["latitude"],
+            longitude=geo["longitude"],
+            ward_code=geo["ward_code"],
+            pin_code=geo["pin_code"]
+        )
+
+        if zid == target_location_id:
+            status = "Moderate Risk" if target_pulse >= 70 else "Elevated Risk"
+            status_hi = "मध्यम जोखिम" if target_pulse >= 70 else "बढ़ा हुआ जोखिम"
+            status_color = "amber" if target_pulse >= 70 else "orange"
+
+            w_sig = WeatherSignal(
+                condition=weather_info["en"],
+                condition_hi=weather_info["hi"],
+                temperature_c=weather_info["temp"],
+                rainfall_mm=weather_info["rain"],
+                aqi=weather_info["aqi"],
+                aqi_status=weather_info["aqi_status"],
+                aqi_status_hi=weather_info["aqi_status_hi"],
+                icon=weather_info["icon"],
+                deduction=w_ded
+            )
+            tr_sig = TransitSignal(
+                delay_minutes=curr_delay,
+                normal_delay_minutes=norm_delay,
+                pct_increase=transit_pct,
+                primary_corridor=geo["primary_corridor"],
+                active_lines_delayed=4,
+                deduction=t_ded
+            )
+            inc_sig = IncidentsSignal(
+                count=curr_incidents,
+                normal_count=norm_incidents,
+                pct_increase=incidents_pct,
+                threshold=threshold,
+                threshold_exceeded=True,
+                primary_category="Waterlogging & Tree Falls",
+                primary_category_hi="जलभराव और पेड़ गिरने की घटनाएं",
+                deduction=i_ded
+            )
+            traf_sig = TrafficSignal(
+                congestion_level="Severe",
+                congestion_level_hi="गंभीर जाम",
+                speed_kmh=curr_speed,
+                normal_speed_kmh=norm_speed,
+                travel_time_increase_pct=traffic_pct,
+                bottleneck_junction=geo["bottleneck_junction"],
+                roads_affected=18,
+                deduction=tr_ded
+            )
+            breakdown = ScoreBreakdown(
+                normal_pulse=normal_pulse,
+                weather_deduction=w_ded,
+                transit_deduction=t_ded,
+                incidents_deduction=i_ded,
+                traffic_deduction=tr_ded,
+                total_deduction=total_deduction,
+                current_pulse=target_pulse
+            )
+            forecast = ForecastSignal(
+                risk_level="Elevated Risk",
+                risk_level_hi="बढ़ा हुआ जोखिम",
+                predicted_delay_range=f"{curr_delay + 3} - {curr_delay + 8} mins",
+                incident_trend="Rising (+3 to +5 calls/hr)",
+                disclaimer="Prototype forward trajectory based on live telemetry rates, not a validated predictive model."
+            )
+            alert = AlertSignal(
+                id=f"ALT-{random.randint(7000, 9999)}",
+                priority="HIGH",
+                priority_hi="उच्च",
+                timestamp=t4,
+                title=f"Civic Threshold Exceeded: {geo['local_area']}",
+                title_hi=f"नागरिक सीमा उल्लंघन: {geo['local_area_hi']}",
+                message=f"Incident threshold breached ({curr_incidents} vs limit {threshold}) on {geo['primary_corridor']}. Bottleneck gridlock at {geo['bottleneck_junction']}.",
+                message_hi=f"{geo['primary_corridor']} पर घटना सीमा पार ({curr_incidents} बनाम सीमा {threshold})। {geo['bottleneck_junction']} पर भीषण जाम।",
+                recommended_actions=[
+                    f"Deploy municipal de-watering units to {geo['bottleneck_junction']}",
+                    f"Reroute feeder transit buses from {geo['primary_corridor']}",
+                    f"Issue resident travel advisory: Buffer +25 mins"
+                ],
+                recommended_actions_hi=[
+                    f"{geo['bottleneck_junction']} पर नगरपालिका जल निकासी पंप तैनात करें",
+                    f"{geo['primary_corridor']} से फीडर बसों का मार्ग परिवर्तित करें",
+                    "नागरिकों को यात्रा में 25 मिनट अतिरिक्त समय रखने की सलाह जारी करें"
+                ]
+            )
+            timeline = [
+                TimelineEvent(
+                    timestamp_offset="45m ago",
+                    time_label=t1,
+                    title="Rain Onset Detected",
+                    title_hi="वर्षा की शुरुआत दर्ज",
+                    description=f"Initial downpour began across {geo['district']}.",
+                    description_hi=f"{geo['district_hi']} में तेज मानसूनी बारिश शुरू हुई।",
+                    pulse_at_time=normal_pulse - round(w_ded * 0.4),
+                    icon="cloud-rain"
+                ),
+                TimelineEvent(
+                    timestamp_offset="30m ago",
+                    time_label=t2,
+                    title="Corridor Slowdown",
+                    title_hi="परिवहन गलियारे में मंदी",
+                    description=f"Delays on {geo['primary_corridor']} rose to +{curr_delay - 6}m.",
+                    description_hi=f"{geo['primary_corridor']} पर देरी बढ़कर +{curr_delay - 6} मिनट हुई।",
+                    pulse_at_time=normal_pulse - round(w_ded * 0.7) - 3,
+                    icon="bus"
+                ),
+                TimelineEvent(
+                    timestamp_offset="15m ago",
+                    time_label=t3,
+                    title="Gridlock & Incidents Surge",
+                    title_hi="जाम और घटनाओं में उछाल",
+                    description=f"Waterlogging reports at {geo['bottleneck_junction']}.",
+                    description_hi=f"{geo['bottleneck_junction']} पर जलभराव की कई रिपोर्ट दर्ज।",
+                    pulse_at_time=target_pulse + 5,
+                    icon="alert-triangle"
+                ),
+                TimelineEvent(
+                    timestamp_offset="Right Now",
+                    time_label=t4,
+                    title="Peak Civic Risk",
+                    title_hi="नागरिक जोखिम चरम पर",
+                    description=f"Pulse dropped to {target_pulse}/100. Cross-signal correlation active.",
+                    description_hi=f"पल्स स्कोर गिरकर {target_pulse}/100 पर। क्रॉस-सिग्नल सहसंबंध सक्रिय।",
+                    pulse_at_time=target_pulse,
+                    icon="activity"
+                )
+            ]
+            trend_history = [
+                normal_pulse,
+                normal_pulse - 2,
+                normal_pulse - 5,
+                target_pulse + 8,
+                target_pulse + 3,
+                target_pulse
+            ]
+            resident_advice = f"{weather_info['en']}, transit delays of {curr_delay}m, and bottlenecking at {geo['bottleneck_junction']} mean travel in {geo['local_area']} will take significantly longer. Allow at least +25 mins extra time."
+            resident_advice_hi = f"{weather_info['hi']}, {curr_delay} मिनट की परिवहन देरी और {geo['bottleneck_junction']} पर जाम के कारण {geo['local_area_hi']} में आवागमन में काफी अधिक समय लगेगा। कृपया कम से कम 25 मिनट अतिरिक्त रखें।"
+            staff_summary = f"{geo['local_area']}: Transit delays +{transit_pct}% ({curr_delay}m), speed {curr_speed}km/h (norm {norm_speed}km/h). Incidents +{incidents_pct}% ({curr_incidents} vs {norm_incidents}). Threshold breached."
+            staff_summary_hi = f"{geo['local_area_hi']}: परिवहन देरी +{transit_pct}% ({curr_delay} मिनट), गति {curr_speed} किमी/घंटा (सामान्य {norm_speed})। घटनाएं +{incidents_pct}% ({curr_incidents} बनाम {norm_incidents})। सीमा पार।"
+
+            zone_obj = Zone(
+                id=zid,
+                name=geo["local_area"],
+                name_hi=geo["local_area_hi"],
+                location=loc,
+                pulse=target_pulse,
+                normal_pulse=normal_pulse,
+                status=status,
+                status_hi=status_hi,
+                status_color=status_color,
+                weather=w_sig,
+                transit=tr_sig,
+                incidents=inc_sig,
+                traffic=traf_sig,
+                breakdown=breakdown,
+                forecast=forecast,
+                alert=alert,
+                timeline=timeline,
+                trend_history_60m=trend_history,
+                correlation_detected=True,
+                correlation_summary=f"Spatial-temporal correlation identified between localized rain ({weather_info['rain']}mm), corridor bottleneck gridlock at {geo['bottleneck_junction']}, and {curr_incidents} civic disruption calls.",
+                correlation_summary_hi=f"स्थानीय वर्षा ({weather_info['rain']}mm), {geo['bottleneck_junction']} पर भीषण जाम और {curr_incidents} नागरिक व्यवधान रिपोर्टों के बीच स्थानिक-कालिक सहसंबंध पाया गया।",
+                resident_advice=resident_advice,
+                resident_advice_hi=resident_advice_hi,
+                staff_summary=staff_summary,
+                staff_summary_hi=staff_summary_hi
+            )
+            zones_dict[zid] = zone_obj
+
+        else:
+            other_pulse = random.choice([84, 86, 88, 91, 93])
+            other_norm = 95
+            other_ded = other_norm - other_pulse
+            ow_sig = WeatherSignal(
+                condition="Partly Cloudy & Normal",
+                condition_hi="हल्के बादल और सामान्य",
+                temperature_c=28,
+                rainfall_mm=0.0,
+                aqi=110,
+                aqi_status="Moderate",
+                aqi_status_hi="मध्यम",
+                icon="cloud-sun",
+                deduction=1
+            )
+            otr_sig = TransitSignal(
+                delay_minutes=3,
+                normal_delay_minutes=3,
+                pct_increase=0,
+                primary_corridor=geo["primary_corridor"],
+                active_lines_delayed=0,
+                deduction=1
+            )
+            oinc_sig = IncidentsSignal(
+                count=2,
+                normal_count=3,
+                pct_increase=0,
+                threshold=8,
+                threshold_exceeded=False,
+                primary_category="Routine Municipal Calls",
+                primary_category_hi="नियमित नगर पालिका सूचनाएं",
+                deduction=1
+            )
+            otraf_sig = TrafficSignal(
+                congestion_level="Smooth Flow",
+                congestion_level_hi="सुगम प्रवाह",
+                speed_kmh=38,
+                normal_speed_kmh=42,
+                travel_time_increase_pct=5,
+                bottleneck_junction=geo["bottleneck_junction"],
+                roads_affected=2,
+                deduction=max(1, other_ded - 3)
+            )
+            obrk = ScoreBreakdown(
+                normal_pulse=other_norm,
+                weather_deduction=1,
+                transit_deduction=1,
+                incidents_deduction=1,
+                traffic_deduction=max(1, other_ded - 3),
+                total_deduction=other_ded,
+                current_pulse=other_pulse
+            )
+            zone_obj = Zone(
+                id=zid,
+                name=geo["local_area"],
+                name_hi=geo["local_area_hi"],
+                location=loc,
+                pulse=other_pulse,
+                normal_pulse=other_norm,
+                status="Normal" if other_pulse >= 85 else "Moderate Risk",
+                status_hi="सामान्य" if other_pulse >= 85 else "मध्यम जोखिम",
+                status_color="emerald" if other_pulse >= 85 else "amber",
+                weather=ow_sig,
+                transit=otr_sig,
+                incidents=oinc_sig,
+                traffic=otraf_sig,
+                breakdown=obrk,
+                forecast=ForecastSignal(
+                    risk_level="Low Risk",
+                    risk_level_hi="कम जोखिम",
+                    predicted_delay_range="2 - 5 mins",
+                    incident_trend="Stable",
+                    disclaimer="Telemetry indicators operating normally."
+                ),
+                alert=None,
+                timeline=[],
+                trend_history_60m=[94, 93, 92, 91, 92, other_pulse],
+                correlation_detected=False,
+                correlation_summary="No significant cross-signal anomalies detected.",
+                correlation_summary_hi="कोई विसंगति नहीं पाई गई।",
+                resident_advice="Normal operating conditions across this district.",
+                resident_advice_hi="इस जिले में सामान्य परिचालन स्थिति है।",
+                staff_summary="All parameters within acceptable thresholds.",
+                staff_summary_hi="सभी पैरामीटर स्वीकार्य सीमा के भीतर हैं।"
+            )
+            zones_dict[zid] = zone_obj
+
+    sorted_zones = sorted(zones_dict.values(), key=lambda z: z.pulse, reverse=True)
+    best_zone = sorted_zones[0]
+    second_zone = sorted_zones[1]
+
+    active_zone = zones_dict[target_location_id]
+
+    return {
+        "active_location_id": target_location_id,
+        "active_zone_id": target_location_id,
+        "location": active_zone.location.__dict__,
+        "zones": {k: v.to_dict() for k, v in zones_dict.items()},
+        "best_zone": {
+            "name": best_zone.location.local_area,
+            "name_hi": best_zone.location.local_area_hi,
+            "pulse": best_zone.pulse
+        },
+        "second_zone": {
+            "name": second_zone.location.local_area,
+            "name_hi": second_zone.location.local_area_hi,
+            "pulse": second_zone.pulse
+        },
+        "generated_at": datetime.now().isoformat()
+    }
+    """
+CityPulse - Bilingual Translations (English & Hindi)
+Includes high-signal metric terms, geographic hierarchy tokens, and the 17-step presentation script.
+"""
+
+TRANSLATIONS = {
+    "en": {
+        "app_title": "CityPulse",
+        "app_tagline": "Civic Health & Urban Intelligence Command",
+        "civic_pulse": "Civic Pulse Index",
+        "out_of_100": "out of 100",
+        "select_zone": "Select District / Ward",
+        "new_data": "🔄 New Situation",
+        "auto_refresh": "Auto",
+        "ask_ai": "💬 Ask CityPulse AI",
+        "gps_detect": "📍 Auto-Detect GPS",
+        "weather": "Weather & AQI",
+        "transit": "Transit Corridor",
+        "incidents": "Emergency Disruption",
+        "traffic": "Traffic Bottleneck",
+        "tab_map": "2. Interactive Civic Health Radar Map",
+        "tab_before_now": "3. Baseline vs Current Situation",
+        "tab_analyze": "5. Spatial-Temporal Correlation Scanner",
+        "analyze_btn": "Scan Correlations: {zone}",
+        "disclaimer_correlation": "To be clear, we are <b>not claiming that one event definitely caused another</b>. We are identifying a possible correlation based on the available telemetry.",
+        "tab_why_pulse": "6. Transparent Mathematical Deduction Waterfall",
+        "tab_ai_summary": "7. AI Plain-Language Ward Advisory",
+        "tab_forecast": "8. 30-Minute Forward Trajectory",
+        "tab_smart_alert": "9. Autonomous Smart Alert",
+        "create_alert": "Dispatch Alert",
+        "recommended_actions": "Mandatory Operations Checklist:",
+        "tab_two_audiences": "10. Two Audiences (Resident vs Command)",
+        "tab_zone_compare": "11. Cross-District Health at a Glance",
+        "tab_replay_trends": "12. 45m Replay & 60-Minute Trends",
+        "slider_label": "Drag replay timeline slider (Past 45m to Present) to see how the situation unfolded.",
+        "trend_60m": "Civic Pulse 60-Minute Real-Time Trend & Safety Thresholds:",
+        "tab_export": "13. Export Structured Civic Report",
+        "download_json": "Download JSON Data",
+        "print_report": "Print / PDF",
+        "close_heading": "Complete Civic Intelligence Workflow",
+        "close_quote": "\"CityPulse: from scattered civic data to one clear city pulse.\"",
+        "close_body": "What you just saw was a complete civic intelligence workflow across country, state, district, and local ward. CityPulse unifies fragmented signals, maps them, explains its score, summarizes the situation, and delivers actionable clarity.",
+        "suggested_questions": "Suggested prompts:",
+        "q1": "Why is the score {pulse} in this ward?",
+        "q2": "Is the rain causing the delays?",
+        "q3": "What should residents do right now?",
+        "ai_disclaimer": "Answers strictly grounded in live telemetry. Identifies correlations without claiming unverified causation."
+    },
+    "hi": {
+        "app_title": "सिटीपल्स",
+        "app_tagline": "नागरिक स्वास्थ्य एवं शहरी आसूचना कमान केंद्र",
+        "civic_pulse": "सिविक पल्स इंडेक्स",
+        "out_of_100": "100 में से",
+        "select_zone": "ज़िला / वार्ड चुनें",
+        "new_data": "🔄 नई स्थिति",
+        "auto_refresh": "ऑटो",
+        "ask_ai": "💬 सिटीपल्स AI से पूछें",
+        "gps_detect": "📍 ऑटो-डिटेक्ट GPS",
+        "weather": "मौसम एवं AQI",
+        "transit": "परिवहन गलियारा",
+        "incidents": "नागरिक व्यवधान",
+        "traffic": "यातायात जाम",
+        "tab_map": "2. इंटरएक्टिव सिविक हेल्थ रडार मैप",
+        "tab_before_now": "3. सामान्य आधारभूत बनाम वर्तमान स्थिति",
+        "tab_analyze": "5. स्थानिक-कालिक सहसंबंध स्कैनर",
+        "analyze_btn": "सहसंबंध स्कैन करें: {zone}",
+        "disclaimer_correlation": "स्पष्ट कर दें कि हम यह <b>दावा नहीं कर रहे हैं कि एक घटना ने दूसरी को निश्चित रूप से जन्म दिया</b>। हम उपलब्ध टेलीमेट्री के आधार पर केवल एक संभावित सहसंबंध की पहचान कर रहे हैं।",
+        "tab_why_pulse": "6. पारदर्शी गणितीय कटौती विवरण",
+        "tab_ai_summary": "7. AI सरल-भाषा वार्ड परामर्श",
+        "tab_forecast": "8. 30-मिनट का भविष्यगामी प्रक्षेपवक्र",
+        "tab_smart_alert": "9. स्वायत्त स्मार्ट अलर्ट",
+        "create_alert": "अलर्ट जारी करें",
+        "recommended_actions": "अनिवार्य परिचालन चेकलिस्ट:",
+        "tab_two_audiences": "10. दो वर्ग (नागरिक बनाम कमान दल)",
+        "tab_zone_compare": "11. ज़िलावार स्वास्थ्य तुलना",
+        "tab_replay_trends": "12. 45-मिनट रीप्ले और 60-मिनट रुझान",
+        "slider_label": "रीप्ले स्लाइडर को खींचकर देखें कि स्थिति कैसे विकसित हुई।",
+        "trend_60m": "सिविक पल्स 60-मिनट वास्तविक समय रुझान एवं सुरक्षा सीमाएं:",
+        "tab_export": "13. संरचित सिविक रिपोर्ट निर्यात करें",
+        "download_json": "JSON डेटा डाउनलोड",
+        "print_report": "प्रिंट / PDF",
+        "close_heading": "पूर्ण नागरिक आसूचना वर्कफ़्लो",
+        "close_quote": "\"सिटीपल्स: बिखरे हुए शहरी डेटा से शहर की एक स्पष्ट नब्ज़ तक।\"",
+        "close_body": "जो आपने अभी देखा वह देश, राज्य, ज़िला और स्थानीय वार्ड में एक पूर्ण नागरिक आसूचना वर्कफ़्लो था। सिटीपल्स बिखरे हुए संकेतों को एकजुट करता है, मैप करता है, स्कोर समझाता है और स्पष्टता प्रदान करता है।",
+        "suggested_questions": "सुझाए गए प्रश्न:",
+        "q1": "इस वार्ड का स्कोर {pulse} क्यों है?",
+        "q2": "क्या बारिश की वजह से परिवहन में देरी हो रही है?",
+        "q3": "नागरिकों को अभी क्या करना चाहिए?",
+        "ai_disclaimer": "उत्तर केवल लाइव टेलीमेट्री पर आधारित हैं। बिना सत्यापन के कोई कारण-संबंध का दावा नहीं किया जाता।"
+    }
+}
+
+SAY_BAR_EN = {
+    1: "Welcome to CityPulse, a live civic health dashboard. Right now the Civic Pulse for [{zone}] is [{pulse}] out of 100 — [{status}]. Normal baseline is [{normal_pulse}], so it is down [{total_deductions}] points.",
+    2: "Here on the Live Civic Radar Map, you can see geospatial telemetry centered on [{lat}, {lon}]. [{zone}] is pulsing [{status}] while nearby hubs show varying health.",
+    3: "Here is the comparison: normal transit delay is [{normal_delay}] minutes; right now it is [{delay}] minutes — a [{transit_pct}%] increase. Incidents are [{incidents}] against a normal of [{normal_incidents}].",
+    4: "CityPulse continuously monitors four high-signal telemetry feeds: Weather with AQI [{aqi}], Transit on [{corridor}], Emergency 112 logs, and Road Speed at [{bottleneck}] ([{speed}] km/h).",
+    5: "CityPulse does not just report data; it cross-analyzes across systems. Notice the spatial-temporal correlation between localized rain, bottlenecking at [{bottleneck}], and [{incidents}] emergency calls.",
+    6: "A score without an explanation cannot be trusted. The formula is exact: [{normal_pulse}] normal minus [{weather_deduction}] weather, minus [{transit_deduction}] transit, minus [{incident_deduction}] incidents, minus [{traffic_deduction}] traffic equals [{pulse}].",
+    7: "CityPulse generates a plain-language summary in seconds: \"[{plain_summary_excerpt}]\". Clear and actionable.",
+    8: "Looking 30 minutes ahead: risk level is [{risk_level}], transit delays projected between [{delay}] and [{delay} + 6] minutes. Proactive visibility before gridlock compounds.",
+    9: "When incidents exceed threshold, CityPulse creates a smart alert automatically: [{alert_priority}] priority with recommended operations checklist.",
+    10: "CityPulse serves two audiences from the same data: plain language for residents, and analytical telemetry for city operations staff.",
+    11: "Across the urban center, [{best_zone}] is healthiest at [{best_score}], while [{zone}] requires immediate operational attention at [{pulse}].",
+    12: "With 45-minute replay, watch how the situation developed from [{time_1}] through [{time_2}] and [{time_3}] to [{time_4}].",
+    13: "With one click, export a structured briefing ready for district magistrates, municipal commissioners, or citizens.",
+    14: "CityPulse includes an AI assistant strictly grounded in dashboard telemetry. It explains deductions and refuses to guess ungrounded information.",
+    15: "CityPulse supports both English and Hindi. The entire command interface, map tooltips, and spoken script switch seamlessly.",
+    16: "Every click of New Data generates a realistic civic scenario. Notice how all four feeds, score deduction math, and map pins remain in balance.",
+    17: "What you just saw was a complete civic intelligence workflow: unifies signals, maps them, explains its score, and delivers actionable clarity."
+}
+
+SAY_BAR_HI = {
+    1: "सिटीपल्स में आपका स्वागत है। इस समय [{district}] के [{zone}] का सिविक पल्स 100 में से [{pulse}] है — यानी [{status}]। सामान्य आधारभूत स्कोर [{normal_pulse}] है, जिससे यह [{total_deductions}] अंक नीचे है।",
+    2: "लाइव सिविक रडार मैप पर [{lat}, {lon}] के वास्तविक निर्देशांकों पर टेलीमेट्री देख सकते हैं। [{zone}] [{status}] स्थिति में है।",
+    3: "यह तुलना देखिए: सामान्य बस देरी [{normal_delay}] मिनट है, अभी यह [{delay}] मिनट है — यानी [{transit_pct}%] की वृद्धि। आपातकालीन कॉल [{incidents}] हैं।",
+    4: "सिटीपल्स चार मुख्य संकेतों की निगरानी करता है: मौसम एवं AQI [{aqi}], [{corridor}] पर परिवहन, 112 आपातकालीन कॉल, और [{bottleneck}] पर [{speed}] किमी/घंटे की गति।",
+    5: "सिटीपल्स केवल डेटा नहीं दिखाता, बल्कि प्रणालियों के बीच सहसंबंध तलाशता है: बारिश, [{bottleneck}] पर जाम और [{incidents}] नागरिक कॉल्स के बीच समय और स्थान का सटीक मेल।",
+    6: "बिना व्याख्या के किसी स्कोर पर भरोसा नहीं किया जा सकता: सामान्य आधारभूत [{normal_pulse}] में से [{weather_deduction}] मौसम, [{transit_deduction}] परिवहन, [{incident_deduction}] घटनाएं और [{traffic_deduction}] जाम घटाने पर ठीक [{pulse}] आता है।",
+    7: "सिटीपल्स कुछ ही सेकंड में सरल भाषा में परामर्श तैयार करता है: \"[{plain_summary_excerpt}]\"।",
+    8: "अगले 30 मिनट का अनुमान: जोखिम स्तर [{risk_level}] है और परिवहन देरी बढ़ने का अनुमान है। संकट गहराने से पहले पूर्व-सूचना।",
+    9: "सीमा पार होते ही सिटीपल्स स्वचालित रूप से स्मार्ट अलर्ट बनाता है: [{alert_priority}] प्राथमिकता के साथ अनिवार्य परिचालन चेकलिस्ट।",
+    10: "सिटीपल्स एक ही डेटा से दो वर्गों की सेवा करता है: नागरिकों के लिए सरल भाषा, और नगर निगम दल के लिए विश्लेषणात्मक टेलीमेट्री।",
+    11: "ज़िले में तुलना: [{best_zone}] [{best_score}] के साथ सबसे स्वस्थ है, जबकि [{zone}] को तत्काल ध्यान देने की आवश्यकता है।",
+    12: "45-मिनट रीप्ले के साथ देखिए कि [{time_1}] से [{time_2}] और [{time_3}] होते हुए [{time_4}] तक स्थिति कैसे विकसित हुई।",
+    13: "एक क्लिक में ज़िला मजिस्ट्रेट या नगर आयुक्त के लिए संरचित रिपोर्ट और प्रिंट तैयार हो जाता है।",
+    14: "सिटीपल्स AI सहायक केवल लाइव टेलीमेट्री पर आधारित उत्तर देता है और अनुमान लगाने से स्पष्ट मना करता है।",
+    15: "सिटीपल्स अंग्रेज़ी और हिन्दी दोनों भाषाओं में सहजता से काम करता है। पूरा मैप और इंटरफ़ेस एक क्लिक में बदल जाता है।",
+    16: "नया डेटा जनरेट करने पर सभी चार संकेत, रडार मैप और गणित का संतुलन पूर्णतः सटीक रहता है।",
+    17: "सिटीपल्स: बिखरे हुए शहरी डेटा से शहर की एक स्पष्ट नब्ज़ तक।"
+}
+"""
+CityPulse - AI Engine & Grounded Assistant
+Formatted specifically for geographic context (Country -> State -> District -> Local Ward).
+Adheres strictly to scientific integrity:
+- Cautious on correlation vs causation (never states unverified cause).
+- Refuses to guess out-of-scope information.
+"""
+
+from typing import Dict, Any, List
+from translations import SAY_BAR_EN, SAY_BAR_HI, TRANSLATIONS
+
+def format_say_bar(step: int, lang: str, state: Dict[str, Any]) -> str:
+    script_dict = SAY_BAR_HI if lang == "hi" else SAY_BAR_EN
+    template = script_dict.get(step, script_dict[1])
+
+    zone_id = state.get("active_location_id") or state.get("active_zone_id", "delhi_cp")
+    zone_data = state["zones"][zone_id]
+    loc = zone_data["location"]
+    is_hi = (lang == "hi")
+
+    z_name = loc["local_area_hi"] if is_hi else loc["local_area"]
+    district = loc["district_hi"] if is_hi else loc["district"]
+    state_name = loc["state_hi"] if is_hi else loc["state"]
+    country = "भारत" if is_hi else loc["country"]
+    lat = f"{loc['latitude']:.4f}° N"
+    lon = f"{loc['longitude']:.4f}° E"
+
+    pulse = zone_data["pulse"]
+    status = zone_data["status_hi"] if is_hi else zone_data["status"]
+    normal_pulse = zone_data["normal_pulse"]
+
+    delay = zone_data["transit"]["delay_minutes"]
+    norm_delay = zone_data["transit"]["normal_delay_minutes"]
+    transit_pct = zone_data["transit"]["pct_increase"]
+    corridor = zone_data["transit"]["primary_corridor"]
+
+    incidents = zone_data["incidents"]["count"]
+    norm_inc = zone_data["incidents"]["normal_count"]
+    incidents_pct = zone_data["incidents"]["pct_increase"]
+
+    traffic_pct = zone_data["traffic"]["travel_time_increase_pct"]
+    bottleneck = zone_data["traffic"]["bottleneck_junction"]
+    speed = zone_data["traffic"]["speed_kmh"]
+
+    weather_desc = zone_data["weather"]["condition_hi"] if is_hi else zone_data["weather"]["condition"]
+    aqi = zone_data["weather"]["aqi"]
+
+    brk = zone_data["breakdown"]
+    w_ded = brk["weather_deduction"]
+    t_ded = brk["transit_deduction"]
+    i_ded = brk["incidents_deduction"]
+    tr_ded = brk["traffic_deduction"]
+    tot_ded = brk["total_deduction"]
+
+    risk_level = zone_data["forecast"]["risk_level_hi"] if is_hi else zone_data["forecast"]["risk_level"]
+    alert_prio = zone_data["alert"]["priority_hi"] if (zone_data.get("alert") and is_hi) else (zone_data["alert"]["priority"] if zone_data.get("alert") else "HIGH")
+
+    best_z = state["best_zone"]["name_hi"] if is_hi else state["best_zone"]["name"]
+    best_sc = state["best_zone"]["pulse"]
+    second_z = state["second_zone"]["name_hi"] if is_hi else state["second_zone"]["name"]
+    second_sc = state["second_zone"]["pulse"]
+
+    summary_excerpt = (zone_data["resident_advice_hi"] if is_hi else zone_data["resident_advice"])[:85] + "..."
+
+    timestamps = {}
+    for ev in zone_data["timeline"]:
+        if "45m" in ev["timestamp_offset"]:
+            timestamps["t1"] = ev["time_label"]
+        elif "30m" in ev["timestamp_offset"]:
+            timestamps["t2"] = ev["time_label"]
+        elif "15m" in ev["timestamp_offset"]:
+            timestamps["t3"] = ev["time_label"]
+        elif "Right Now" in ev["timestamp_offset"] or "Now" in ev["timestamp_offset"]:
+            timestamps["t4"] = ev["time_label"]
+
+    formatted = template.format(
+        country=country,
+        state=state_name,
+        district=district,
+        zone=z_name,
+        lat=lat,
+        lon=lon,
+        corridor=corridor,
+        bottleneck=bottleneck,
+        aqi=aqi,
+        speed=speed,
+        pulse=pulse,
+        status=status,
+        normal_pulse=normal_pulse,
+        delay=delay,
+        normal_delay=norm_delay,
+        transit_pct=transit_pct,
+        incidents=incidents,
+        normal_incidents=norm_inc,
+        incidents_pct=incidents_pct,
+        weather=weather_desc,
+        traffic_pct=traffic_pct,
+        weather_deduction=w_ded,
+        transit_deduction=t_ded,
+        incident_deduction=i_ded,
+        traffic_deduction=tr_ded,
+        total_deductions=tot_ded,
+        risk_level=risk_level,
+        alert_priority=alert_prio,
+        best_zone=best_z,
+        best_score=best_sc,
+        second_zone=second_z,
+        second_score=second_sc,
+        plain_summary_excerpt=summary_excerpt,
+        time_1=timestamps.get("t1", "14:15"),
+        time_2=timestamps.get("t2", "14:30"),
+        time_3=timestamps.get("t3", "14:45"),
+        time_4=timestamps.get("t4", "15:00")
+    )
+    return formatted
+
+def answer_query(query: str, lang: str, state: Dict[str, Any]) -> Dict[str, Any]:
+    q_lower = query.lower().strip()
+    is_hi = (lang == "hi")
+    zone_id = state.get("active_location_id") or state.get("active_zone_id", "delhi_cp")
+    zone_data = state["zones"][zone_id]
+    loc = zone_data["location"]
+    
+    z_name = loc["local_area_hi"] if is_hi else loc["local_area"]
+    district = loc["district_hi"] if is_hi else loc["district"]
+    state_name = loc["state_hi"] if is_hi else loc["state"]
+    corridor = zone_data["transit"]["primary_corridor"]
+    bottleneck = zone_data["traffic"]["bottleneck_junction"]
+    speed = zone_data["traffic"]["speed_kmh"]
+    
+    pulse = zone_data["pulse"]
+    normal_pulse = zone_data["normal_pulse"]
+    status = zone_data["status_hi"] if is_hi else zone_data["status"]
+    
+    w_cond = zone_data["weather"]["condition_hi"] if is_hi else zone_data["weather"]["condition"]
+    aqi = zone_data["weather"]["aqi"]
+    delay = zone_data["transit"]["delay_minutes"]
+    norm_delay = zone_data["transit"]["normal_delay_minutes"]
+    incidents = zone_data["incidents"]["count"]
+    norm_inc = zone_data["incidents"]["normal_count"]
+    
+    brk = zone_data["breakdown"]
+    
+    # 1. Why score query
+    if any(k in q_lower for k in ["why", "score", "pulse", "स्कोर", "पल्स", "कम", "क्यों"]):
+        if is_hi:
+            answer = (
+                f"{district} ज़िले के {z_name} का सिविक पल्स अभी {pulse}/100 ({status}) है। "
+                f"इस वार्ड का सामान्य आधारभूत स्कोर {normal_pulse} है। कुल {brk['total_deduction']} अंकों की कटौती हुई है: "
+                f"मौसम एवं AQI ({aqi}) प्रभाव (-{brk['weather_deduction']}), "
+                f"{corridor} पर परिवहन देरी (-{brk['transit_deduction']}), "
+                f"नागरिक आपातकालीन घटनाएं (-{brk['incidents_deduction']}), और "
+                f"{bottleneck} पर भारी जाम (-{brk['traffic_deduction']})। "
+                f"सत्यापित गणित: {normal_pulse} - {brk['total_deduction']} = {pulse}।"
+            )
+        else:
+            answer = (
+                f"The Civic Pulse for {z_name}, {district} ({state_name}) is currently {pulse} out of 100 ({status}). "
+                f"The normal baseline is {normal_pulse}. The drop of {brk['total_deduction']} points is calculated from four high-signal telemetry feeds: "
+                f"Weather & AQI ({aqi}) impact (-{brk['weather_deduction']} pts), "
+                f"Transit delays on {corridor} averaging {delay}m (-{brk['transit_deduction']} pts), "
+                f"Emergency disruptions with {incidents} logged calls (-{brk['incidents_deduction']} pts), and "
+                f"Corridor gridlock at {bottleneck} at {speed} km/h (-{brk['traffic_deduction']} pts). "
+                f"Total deductions: {brk['total_deduction']} pts ({normal_pulse} - {brk['total_deduction']} = {pulse})."
+            )
+        return {
+            "answer": answer,
+            "evidence": [f"Ward: {loc['ward_code']}", "AQI & Weather", "Transit Telemetry", "Emergency 112 Logs", "Traffic Sensors"],
+            "correlation_caution": False
+        }
+
+    # 2. Causation vs Correlation query
+    if any(k in q_lower for k in ["rain", "cause", "causing", "delay", "बारिश", "कारण", "देरी"]):
+        if is_hi:
+            answer = (
+                f"{z_name} के आंकड़ों के अनुसार, मौसम ({w_cond}) और {corridor} पर परिवहन में {delay} मिनट की देरी "
+                f"दोनों एक ही समय और स्थान पर दर्ज किए गए हैं।\n\n"
+                f"हालाँकि, वैज्ञानिक सटीकता के लिए: हम यह दावा नहीं करते हैं कि बारिश ने निश्चित रूप से परिवहन देरी का कारण बना। "
+                f"उपलब्ध टेलीमेट्री केवल एक संभावित सहसंबंध (possible correlation) को दर्शाती है।"
+            )
+        else:
+            answer = (
+                f"Based on live ward telemetry in {z_name}, weather hazards ({w_cond}) and transit delays on "
+                f"{corridor} ({delay} mins vs normal {norm_delay} mins) coincide in time and location.\n\n"
+                f"However, to be scientifically precise: we do not claim that the rain definitely caused the delays. "
+                f"CityPulse identifies a possible correlation based on simultaneous telemetry."
+            )
+        return {
+            "answer": answer,
+            "evidence": ["Weather Radar", "GPS Bus Telemetry", "Spatial Alignment"],
+            "correlation_caution": True
+        }
+
+    # 3. Actionable Guidance for Residents
+    if any(k in q_lower for k in ["resident", "do", "advice", "action", "नागरिक", "सलाह", "सावधानी", "क्या करें"]):
+        if is_hi:
+            answer = (
+                f"नागरिकों के लिए अनुशंसित सलाह ({z_name}, {district}):\n"
+                f"• आवागमन के लिए कम से कम 25 मिनट का अतिरिक्त समय लेकर चलें।\n"
+                f"• {bottleneck} पर जलभराव और भारी जाम के कारण वैकल्पिक मार्गों का उपयोग करें।\n"
+                f"• आपात स्थिति में सीधे हेल्पलाइन {loc.get('emergency_contact', '112')} पर संपर्क करें।"
+            )
+        else:
+            answer = (
+                f"Recommended guidance for residents in {z_name}, {district}:\n"
+                f"• Allow at least +25 extra minutes of buffer for city travel.\n"
+                f"• Avoid {bottleneck} due to reported water pooling and gridlock; utilize outer ring arterials.\n"
+                f"• Feeder buses along {corridor} are running 18m behind schedule.\n"
+                f"• In emergency situations, connect directly with {loc.get('emergency_contact', '112')}."
+            )
+        return {
+            "answer": answer,
+            "evidence": ["Emergency Helpline Feed", "Traffic Flow Sensors", "Transit Routing"],
+            "correlation_caution": False
+        }
+
+    # 4. Out of scope / Hallucination refusal
+    if is_hi:
+        answer = (
+            f"मैं केवल {z_name}, {district} की लाइव नगरीय टेलीमेट्री (मौसम, एक्यूआई, बस परिवहन, आपातकालीन 112 कॉल, सड़क गति) "
+            f"के आधार पर ही उत्तर दे सकता हूँ। मेरे पास इस प्रश्न के लिए आवश्यक डेटा उपलब्ध नहीं है और मैं अनुमान नहीं लगाऊँगा।"
+        )
+    else:
+        answer = (
+            f"I only answer questions grounded in live civic telemetry for {z_name}, {district} "
+            f"(weather, AQI, transit corridors, 112 emergency logs, and bottleneck road speeds). "
+            f"I do not have access to that information on this dashboard and will not guess."
+        )
+    return {
+        "answer": answer,
+        "evidence": ["Dashboard Sensor Feeds"],
+        "correlation_caution": False
+    }
+    """
+CityPulse - Integration Verification Script
+Tests models, simulation, math consistency, AI assistant grounding, and HTTP server endpoints.
+"""
+
+import threading
+import time
+import urllib.request
+import json
+import sys
+
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
+from simulation import generate_scenario
+from ai_engine import answer_query, format_say_bar
+from app import ThreadingHTTPServer, CityPulseHandler
+
+def test_simulation_math():
+    print("[1/5] Testing Simulation Engine & Math Consistency...")
+    for _ in range(20):
+        scenario = generate_scenario("delhi_cp")
+        loc_id = scenario["active_location_id"]
+        central = scenario["zones"][loc_id]
+        brk = central["breakdown"]
+        
+        assert 68 <= central["pulse"] <= 76, f"Pulse {central['pulse']} not in 68-76"
+        sum_deductions = brk["weather_deduction"] + brk["transit_deduction"] + brk["incidents_deduction"] + brk["traffic_deduction"]
+        assert sum_deductions == brk["total_deduction"], "Deduction sum mismatch"
+        assert brk["normal_pulse"] - brk["total_deduction"] == brk["current_pulse"], "Normal - total != pulse"
+        assert brk["current_pulse"] == central["pulse"], "Breakdown pulse != zone pulse"
+    print("  ✓ 20 scenario variations verified: Math strictly balances!")
+
+def test_ai_engine():
+    print("[2/5] Testing AI Assistant Grounding & Guardrails...")
+    state = generate_scenario("delhi_cp", target_pulse=71)
+    
+    # 1. Why score 71
+    res1 = answer_query("Why is the score 71?", "en", state)
+    assert "71" in res1["answer"] and "deduction" in res1["answer"].lower(), "Missing score breakdown"
+    print("  ✓ 'Why score' query explains deductions.")
+
+    # 2. Correlation vs Causation
+    res2 = answer_query("Is the rain causing the delays?", "en", state)
+    assert res2["correlation_caution"] is True, "Expected correlation caution flag"
+    assert "possible correlation" in res2["answer"].lower(), "Expected 'possible correlation' phrasing"
+    assert "definitely caused" in res2["answer"].lower(), "Expected caution against definite cause"
+    print("  ✓ 'Is rain causing delays' strictly follows correlation-not-causation rule.")
+
+    # 3. Resident guidance
+    res3 = answer_query("What should residents do?", "en", state)
+    assert "extra" in res3["answer"].lower() or "travel" in res3["answer"].lower(), "Missing travel advice"
+    print("  ✓ 'What should residents do' provides actionable guidance.")
+
+    # 4. Out of scope
+    res4 = answer_query("Who is the mayor of New York?", "en", state)
+    assert "not have access" in res4["answer"].lower() or "will not guess" in res4["answer"].lower(), "Expected hallucination refusal"
+    print("  ✓ Hallucination refusal verified for out-of-scope query.")
+
+def test_translations():
+    print("[3/5] Testing English and Hindi Say Bar Prompters...")
+    state = generate_scenario("delhi_cp", target_pulse=71)
+    for step in range(1, 18):
+        line_en = format_say_bar(step, "en", state)
+        line_hi = format_say_bar(step, "hi", state)
+        assert len(line_en) > 10, f"Empty English line for step {step}"
+        assert len(line_hi) > 10, f"Empty Hindi line for step {step}"
+    print("  ✓ All 17 steps formatted in both English and Hindi.")
+
+def test_http_server():
+    print("[4/5] Testing Live HTTP Server on Port 8008...")
+    server = ThreadingHTTPServer(("localhost", 8008), CityPulseHandler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    time.sleep(0.5)
+
+    try:
+        # Test GET /
+        with urllib.request.urlopen("http://localhost:8008/") as r:
+            assert r.status == 200
+            html = r.read().decode("utf-8")
+            assert "CityPulse" in html
+        print("  ✓ GET / serves index.html")
+
+        # Test GET /api/state
+        with urllib.request.urlopen("http://localhost:8008/api/state?lang=en&step=1") as r:
+            assert r.status == 200
+            data = json.loads(r.read().decode("utf-8"))
+            assert data["current_step"] == 1
+            assert "Welcome to CityPulse" in data["say_bar"]
+        print("  ✓ GET /api/state returns dynamic state and Say Bar line")
+
+        # Test POST /api/chat
+        req = urllib.request.Request(
+            "http://localhost:8008/api/chat",
+            data=json.dumps({"message": "Why is the score 71?", "lang": "en"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req) as r:
+            assert r.status == 200
+            chat_res = json.loads(r.read().decode("utf-8"))
+            assert len(chat_res["answer"]) > 20
+        print("  ✓ POST /api/chat responds with grounded telemetry")
+
+        # Test GET /api/locations
+        with urllib.request.urlopen("http://localhost:8008/api/locations") as r:
+            assert r.status == 200
+            loc_data = json.loads(r.read().decode("utf-8"))
+            assert "India" in loc_data["locations"]
+        print("  ✓ GET /api/locations returns geographic hierarchy tree")
+
+        # Test POST /api/detect-location (Mumbai coords)
+        req_gps = urllib.request.Request(
+            "http://localhost:8008/api/detect-location",
+            data=json.dumps({"lat": 19.07, "lon": 72.87}).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req_gps) as r:
+            assert r.status == 200
+            gps_res = json.loads(r.read().decode("utf-8"))
+            assert gps_res["detected_location"]["id"] == "mumbai_bkc"
+        print("  ✓ POST /api/detect-location accurately resolves nearest GPS hub (Mumbai BKC)")
+
+        # Test GET /api/export
+        with urllib.request.urlopen("http://localhost:8008/api/export") as r:
+            assert r.status == 200
+            exp_data = json.loads(r.read().decode("utf-8"))
+            assert "high_signal_metrics" in exp_data
+            assert "location_hierarchy" in exp_data
+        print("  ✓ GET /api/export generates structured civic intelligence report")
+
+    finally:
+        server.shutdown()
+        server.server_close()
+        print("  ✓ Server shut down cleanly.")
+
+if __name__ == "__main__":
+    print("\nStarting CityPulse Verification Suite...")
+    test_simulation_math()
+    test_ai_engine()
+    test_translations()
+    test_http_server()
+    print("\n[5/5] ALL TESTS PASSED! Ready for VS Code and live demo presentation.\n")
+    /* CityPulse Custom Styles, Animations & High-End Glassmorphism */
+
+@keyframes heartbeat {
+  0%, 100% { transform: scale(1); }
+  14% { transform: scale(1.18); }
+  28% { transform: scale(1); }
+  42% { transform: scale(1.15); }
+  70% { transform: scale(1); }
+}
+
+.animate-heartbeat {
+  animation: heartbeat 1.3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  transform-origin: center;
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin-slow {
+  animation: spin-slow 8s linear infinite;
+}
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Say Bar Highlight for live dynamic values */
+.say-highlight {
+  color: #fef08a;
+  font-weight: 800;
+  text-decoration: underline;
+  text-decoration-color: #f59e0b;
+  text-underline-offset: 3px;
+  background: rgba(245, 158, 11, 0.18);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-style: normal;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.step-active-highlight {
+  box-shadow: 0 0 0 2px rgba(244, 63, 94, 0.7), 0 10px 30px -5px rgba(244, 63, 94, 0.25);
+  transition: all 0.35s ease-in-out;
+}
+
+/* Scan Animation for Cross-Signal Analyzer */
+@keyframes scanline {
+  0% { top: 0%; opacity: 0.8; }
+  50% { opacity: 1; }
+  100% { top: 100%; opacity: 0.2; }
+}
+
+.scanner-active {
+  position: relative;
+  overflow: hidden;
+}
+
+.scanner-active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, #38bdf8, #a855f7, #ec4899, transparent);
+  box-shadow: 0 0 16px #a855f7;
+  animation: scanline 1.4s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+/* Leaflet Map Dark Styling & High-Z UI Fix */
+.leaflet-container {
+  background: #020617 !important;
+  font-family: inherit !important;
+}
+
+.leaflet-control-zoom {
+  border: 1px solid #334155 !important;
+  border-radius: 12px !important;
+  overflow: hidden !important;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5) !important;
+}
+
+.leaflet-control-zoom a {
+  background-color: #0f172a !important;
+  color: #94a3b8 !important;
+  border-bottom: 1px solid #1e293b !important;
+}
+
+.leaflet-control-zoom a:hover {
+  background-color: #1e293b !important;
+  color: #ffffff !important;
+}
+
+.leaflet-popup-content-wrapper {
+  background: rgba(15, 23, 42, 0.95) !important;
+  backdrop-filter: blur(12px) !important;
+  color: #f1f5f9 !important;
+  border: 1px solid #334155 !important;
+  border-radius: 16px !important;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.7) !important;
+  padding: 4px !important;
+}
+
+.leaflet-popup-tip {
+  background: rgba(15, 23, 42, 0.95) !important;
+  border: 1px solid #334155 !important;
+}
+
+/* Animated Radar Beacon Map Marker */
+.radar-pulse-pin {
+  position: relative;
+  width: 24px;
+  height: 24px;
+}
+
+.radar-pulse-pin .beacon-dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  margin-left: -7px;
+  border-radius: 50%;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.8);
+  z-index: 2;
+}
+
+.radar-pulse-pin .beacon-ring {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 38px;
+  height: 38px;
+  margin-top: -19px;
+  margin-left: -19px;
+  border-radius: 50%;
+  opacity: 0.8;
+  animation: radarPing 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+  z-index: 1;
+}
+
+@keyframes radarPing {
+  0% { transform: scale(0.3); opacity: 1; }
+  75%, 100% { transform: scale(2.2); opacity: 0; }
+}
+
+/* Toast Notifications */
+#toastNotification {
+  position: fixed;
+  top: 80px;
+  right: 20px;
+  z-index: 9999;
+  transform: translateY(-20px);
+  opacity: 0;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+}
+
+#toastNotification.show {
+  transform: translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Print Stylesheet for Step 13 (Structured Report) */
+@media print {
+  header, footer, #aiChatDrawer, button, select, #stepPillsContainer, #toastNotification {
+    display: none !important;
+  }
+  body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    padding-bottom: 0 !important;
+  }
+  main { max-width: 100% !important; padding: 0 !important; }
+  .bg-slate-900, .bg-slate-950, .bg-slate-800 {
+    background: #f8fafc !important;
+    border-color: #cbd5e1 !important;
+    color: #0f172a !important;
+  }
+  text { fill: #0f172a !important; }
+}
